@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <title>Plant Monitoring | MQTT Live Dashboard</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mqtt@5.10.4/dist/mqtt.min.js"></script>
+  <style>
+    :root{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#172b22;background:#f2f6f3}
+    *{box-sizing:border-box}body{margin:0}button{font:inherit}
+    .dashboard{max-width:1150px;margin:34px auto;padding:0 22px 36px}
+    .masthead{padding:28px 30px;border-radius:18px;background:linear-gradient(114deg,#134e35,#216c4c);color:white;box-shadow:0 12px 30px #134e3522}
+    .eyebrow{font-size:11px;letter-spacing:.18em;font-weight:800;text-transform:uppercase;opacity:.78}
+    .header-row{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-top:8px}
+    h1{font-size:clamp(25px,3vw,36px);letter-spacing:-.035em;margin:0 0 7px}
+    .subtitle{margin:0;color:#dcefe3;font-size:14px;line-height:1.6}
+    .connection{display:inline-flex;align-items:center;gap:8px;background:#ffffff19;border:1px solid #ffffff40;padding:10px 13px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap}
+    .dot{width:9px;height:9px;border-radius:50%;background:#ffc56b;box-shadow:0 0 0 4px #ffffff18}
+    .connection.online .dot{background:#77efba}.connection.offline .dot{background:#ffa7a7}
+    .metadata{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:19px;padding-top:15px;border-top:1px solid #ffffff34;color:#e5f3e9;font-size:12px}
+    .metadata code{font-size:11px;word-break:break-all;color:#e5f3e9}
+    .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:20px}
+    .card,.box{background:white;border:1px solid #e3eae5;border-radius:16px;box-shadow:0 2px 9px #142a1b06}
+    .card{padding:22px}
+    .card-top{display:flex;align-items:center;justify-content:space-between}
+    .sensor-icon{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:#eaf4ed;font-size:22px}
+    .card-tag{border:1px solid #dde7e1;border-radius:99px;padding:5px 9px;font-size:11px;font-weight:750;color:#708076}
+    .card h2{margin:16px 0 8px;font-size:14px;font-weight:700;color:#5e6d64}
+    .value{font-size:clamp(27px,3vw,35px);font-weight:760;letter-spacing:-.035em;font-variant-numeric:tabular-nums}
+    .unit{font-size:16px;color:#7a897e;font-weight:650}
+    .progress{height:8px;overflow:hidden;border-radius:99px;background:#ebefeb;margin:17px 0 9px}
+    .bar{height:100%;width:0%;border-radius:99px;transition:width .55s ease}
+    .green{background:#21a467}.orange{background:#eda44b}.blue{background:#338bea}
+    .range{display:flex;justify-content:space-between;font-size:11px;color:#9aa8a0}
+    .sensor-note{font-size:12px;color:#76867b;margin:14px 0 0;min-height:18px}
+    .content{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:18px;margin-top:18px}
+    .box{padding:24px}.box h3{font-size:16px;letter-spacing:-.015em;margin:0 0 6px}
+    .description{color:#7b8b80;font-size:12px;line-height:1.5;margin:0 0 18px}
+    .chart-wrap{position:relative;height:247px}.chart-wrap.short{height:190px}
+    .status{display:flex;align-items:center;justify-content:center;text-align:center;font-size:17px;font-weight:800;padding:18px 12px;border-radius:12px;margin:20px 0 12px;background:#eff2ef;color:#63736a}
+    .status.need-water{background:#fff2d9;color:#9d6100}
+    .status.healthy{background:#e7f7ee;color:#167547}
+    .message{font-size:13px;color:#65756a;line-height:1.7;margin:0}
+    .small-pill{display:inline-flex;align-items:center;gap:8px;font-size:12px;border:1px solid #e1e9e3;border-radius:99px;padding:8px 10px;color:#5d7464;margin-top:17px}
+    .last-reading{font-size:12px;color:#708075;margin-top:12px}
+    .footer{margin:17px 4px 0;font-size:12px;line-height:1.6;color:#77887d}
+    .footer strong{color:#4c6553}
+    @media(max-width:850px){.grid,.content{grid-template-columns:1fr 1fr}.content>*:first-child{grid-column:1/-1}}
+    @media(max-width:600px){.dashboard{padding:0 14px 28px;margin:14px auto}.masthead{padding:22px}.grid,.content{grid-template-columns:1fr}.content>*:first-child{grid-column:auto}.metadata{flex-direction:column}.card{padding:20px}}
+  </style>
+</head>
+<body>
+<main class="dashboard">
+  <section class="masthead">
+    <div class="eyebrow">IoT / Raspberry Pi Monitoring</div>
+    <div class="header-row">
+      <div>
+        <h1>🌱 Plant Environment Monitoring</h1>
+        <p class="subtitle">Live temperature &amp; humidity via M12FTH3Q · Soil moisture sensor coming soon</p>
+      </div>
+      <div class="connection" id="connection" role="status" aria-live="polite"><span class="dot"></span><span id="connectionText">Menghubungkan ke MQTT...</span></div>
+    </div>
+    <div class="metadata">
+      <span id="clock">Waktu: —</span>
+      <span>Broker: <strong>broker.emqx.io</strong> · WSS 8084</span>
+      <span>Topic: <code id="topicDisplay">—</code></span>
+    </div>
+  </section>
+
+  <section class="grid" aria-label="Sensor readings">
+    <article class="card">
+      <div class="card-top"><div class="sensor-icon">💧</div><span class="card-tag" id="soilBadge">BELUM TERPASANG</span></div>
+      <h2>Soil Moisture</h2>
+      <div class="value" id="soilValue">— <span class="unit">%</span></div>
+      <div class="progress"><div id="soilBar" class="bar green"></div></div>
+      <div class="range"><span>0%</span><span>100%</span></div>
+      <p class="sensor-note" id="soilNote">Menunggu sensor soil moisture.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><div class="sensor-icon">🌡️</div><span class="card-tag" id="tempBadge">MENUNGGU DATA</span></div>
+      <h2>Temperature</h2>
+      <div class="value" id="tempValue">— <span class="unit">°C</span></div>
+      <div class="progress"><div id="tempBar" class="bar orange"></div></div>
+      <div class="range"><span>0°C</span><span>50°C</span></div>
+      <p class="sensor-note">M12FTH3Q · Modbus RTU</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><div class="sensor-icon">☁️</div><span class="card-tag" id="humBadge">MENUNGGU DATA</span></div>
+      <h2>Air Humidity</h2>
+      <div class="value" id="humValue">— <span class="unit">%RH</span></div>
+      <div class="progress"><div id="humBar" class="bar blue"></div></div>
+      <div class="range"><span>0%</span><span>100%</span></div>
+      <p class="sensor-note">M12FTH3Q · Modbus RTU</p>
+    </article>
+  </section>
+
+  <section class="content">
+    <article class="box">
+      <h3>Temperature &amp; Humidity Trend</h3>
+      <p class="description">Tren data MQTT yang diterima browser selama 24 jam terakhir. Dicatat setiap ±1 menit.</p>
+      <div class="chart-wrap"><canvas id="environmentChart" aria-label="Temperature humidity chart" role="img"></canvas></div>
+    </article>
+    <article class="box">
+      <h3>🌿 Watering Recommendation</h3>
+      <p class="description">Kondisi penyiraman memerlukan pembacaan soil moisture yang valid.</p>
+      <div class="status" id="statusBox">Belum tersedia</div>
+      <p class="message" id="message">Sensor kelembapan tanah belum terpasang. Sistem belum dapat memberikan rekomendasi penyiraman.</p>
+      <div class="small-pill" id="freshness">◌ Menunggu data Raspberry Pi</div>
+      <p class="last-reading" id="lastReading">Data sensor terakhir: —</p>
+    </article>
+    <article class="box">
+      <h3>Soil Moisture Trend (24 Hours)</h3>
+      <p class="description" id="soilChartNote">Grafik tersedia setelah sensor soil moisture terpasang dan mengirim data asli.</p>
+      <div class="chart-wrap short"><canvas id="soilChart" aria-label="Soil moisture chart" role="img"></canvas></div>
+    </article>
+    <article class="box">
+      <h3>Data Pipeline</h3>
+      <p class="description">Alur komunikasi yang digunakan oleh dashboard ini.</p>
+      <p class="message"><strong>M12FTH3Q</strong> → USB/Modbus RTU → <strong>Raspberry Pi</strong> → MQTT TCP/1883 → <strong>broker.emqx.io</strong> → MQTT over WSS/8084 → <strong>Web Dashboard</strong>.</p>
+      <p class="message" style="margin-top:15px">Koneksi ke broker saja tidak berarti sensor aktif. Status sensor akan berubah setelah paket valid diterima.</p>
+    </article>
+  </section>
+  <p class="footer"><strong>Prototipe edukasi:</strong> broker MQTT ini bersifat publik. Jangan kirim kredensial, data sensitif, atau perintah aktuator. Riwayat grafik tersimpan hanya pada browser yang sedang digunakan.</p>
+</main>
+<script>
+// Harus IDENTIK dengan MQTT_TOPIC pada mqtt_sensor_raspberry_pi.py
+const MQTT_TOPIC = 'iot-soilmonitor/demo-8af3c1d920/telemetry';
+const MQTT_URL = 'wss://broker.emqx.io:8084/mqtt';
+const HISTORY_KEY = 'plant-monitor-history-v1-' + MQTT_TOPIC;
+const MAX_AGE = 20000;  // 20 detik tanpa paket = pembacaan tidak live
+const SAMPLE_PERIOD = 60000;  // grafik disimpan per ±1 menit
+const el = id => document.getElementById(id);
+let client;
+let lastValidPacketAt = 0;
+let latestSoil = null;
+let lastHistoryAt = 0;
+let history = [];
+let environmentChart;
+let soilChart;
+
+function hasNumber(value, min, max) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+}
+function setConnection(label, state) {
+  el('connection').className = 'connection' + (state ? ' ' + state : '');
+  el('connectionText').textContent = label;
+}
+function clock() {
+  el('clock').textContent = 'Waktu: ' + new Date().toLocaleString('id-ID');
+}
+function setReading(valueId, barId, badgeId, value, unit, maxForBar) {
+  el(valueId).innerHTML = value.toFixed(2) + ' <span class="unit">' + unit + '</span>';
+  el(barId).style.width = Math.max(0, Math.min(100, 100 * value / maxForBar)) + '%';
+  el(badgeId).textContent = 'LIVE';
+}
+function resetSoil() {
+  latestSoil = null;
+  el('soilValue').innerHTML = '— <span class="unit">%</span>';
+  el('soilBar').style.width = '0%';
+  el('soilBadge').textContent = 'BELUM TERPASANG';
+  el('soilNote').textContent = 'Menunggu sensor soil moisture.';
+  el('statusBox').className = 'status';
+  el('statusBox').textContent = 'Belum tersedia';
+  el('message').textContent = 'Sensor kelembapan tanah belum terpasang. Sistem belum dapat memberikan rekomendasi penyiraman.';
+}
+function setSoil(value) {
+  latestSoil = value;
+  setReading('soilValue', 'soilBar', 'soilBadge', value, '%', 100);
+  el('soilNote').textContent = 'Data sensor kelembapan tanah diterima.';
+  const low = value < 50;  // Ambang contoh; kalibrasikan berdasarkan tanah/tanaman
+  el('statusBox').className = 'status ' + (low ? 'need-water' : 'healthy');
+  el('statusBox').textContent = low ? 'Need Water' : 'Moisture Sufficient';
+  el('message').textContent = low ?
+    'Kelembapan tanah di bawah 50%. Periksa kondisi tanaman sebelum menyiram.' :
+    'Kelembapan tanah berada di atas ambang contoh 50%.';
+}
+function loadHistory() {
+  try {
+    const loaded = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    if (Array.isArray(loaded)) history = loaded.filter(p => p && Number.isFinite(p.t) &&
+      Date.now() - p.t < 86400000 && Date.now() >= p.t &&
+      hasNumber(p.temperature, -40, 85) && hasNumber(p.humidity, 0, 100));
+  } catch (e) { history = []; }
+  lastHistoryAt = history.length ? history[history.length - 1].t : 0;
+}
+function storeHistory(p) {
+  const now = Date.now();
+  if (now - lastHistoryAt < SAMPLE_PERIOD) return;
+  lastHistoryAt = now;
+  history.push({t:now, temperature:p.temperature, humidity:p.humidity,
+    soil_moisture:hasNumber(p.soil_moisture,0,100) ? p.soil_moisture : null});
+  history = history.filter(x => now - x.t <= 86400000).slice(-1450);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch(e) {}
+  redrawCharts();
+}
+function formatLabel(t) {
+  return new Date(t).toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});
+}
+function buildCharts() {
+  const common = {responsive:true,maintainAspectRatio:false,animation:{duration:250},
+    plugins:{legend:{position:'bottom',labels:{boxWidth:12,usePointStyle:true}}},
+    elements:{point:{radius:0,hitRadius:8},line:{tension:.25,borderWidth:2}},
+    scales:{x:{ticks:{autoSkip:true,maxTicksLimit:8,maxRotation:0},grid:{display:false}}}};
+  environmentChart = new Chart(el('environmentChart'),{
+    type:'line',data:{labels:[],datasets:[
+      {label:'Temperature (°C)',data:[],borderColor:'#e79b43',backgroundColor:'#e79b431a',yAxisID:'yTemp'},
+      {label:'Humidity (%RH)',data:[],borderColor:'#338bea',backgroundColor:'#338bea1a',yAxisID:'yHum'}
+    ]},options:{...common,scales:{...common.scales,
+      yTemp:{type:'linear',position:'left',title:{display:true,text:'°C'},grid:{color:'#eff3ef'}},
+      yHum:{type:'linear',position:'right',min:0,max:100,title:{display:true,text:'%RH'},grid:{drawOnChartArea:false}}
+    }}
+  });
+  soilChart = new Chart(el('soilChart'),{
+    type:'line',data:{labels:[],datasets:[{label:'Soil Moisture (%)',data:[],borderColor:'#21a467',backgroundColor:'#21a46725',fill:true}]},
+    options:{...common,scales:{...common.scales,y:{min:0,max:100,grid:{color:'#eff3ef'}}}}
+  });
+  redrawCharts();
+}
+function redrawCharts() {
+  const labels = history.map(x => formatLabel(x.t));
+  environmentChart.data.labels = labels;
+  environmentChart.data.datasets[0].data = history.map(x => x.temperature);
+  environmentChart.data.datasets[1].data = history.map(x => x.humidity);
+  environmentChart.update('none');
+  soilChart.data.labels = labels;
+  soilChart.data.datasets[0].data = history.map(x => x.soil_moisture);
+  soilChart.update('none');
+  el('soilChartNote').textContent = history.some(x => x.soil_moisture !== null) ?
+    'Riwayat soil moisture yang diterima oleh browser ini.' :
+    'Grafik tersedia setelah sensor soil moisture terpasang dan mengirim data asli.';
+}
+function handleMessage(topic, bytes) {
+  if (topic !== MQTT_TOPIC) return;
+  let data;
+  try { data = JSON.parse(new TextDecoder().decode(bytes)); }
+  catch(e) { console.warn('Data MQTT bukan JSON:', e); return; }
+  if (data.sensor !== 'M12FTH3Q' ||
+      !hasNumber(data.temperature, -40,85) || !hasNumber(data.humidity,0,100)) {
+    console.warn('Payload MQTT tidak sesuai:', data);return;
+  }
+  // Abaikan timestamp jauh dari waktu sekarang agar pesan lama tak diklaim live.
+  const packetTime = Date.parse(data.timestamp);
+  if (!Number.isFinite(packetTime) || Math.abs(Date.now()-packetTime) > 120000) {
+    console.warn('Waktu paket MQTT tidak valid atau clock Raspberry Pi tidak sinkron:', data.timestamp);
+    return;
+  }
+  lastValidPacketAt = Date.now();
+  setReading('tempValue','tempBar','tempBadge',data.temperature,'°C',50);
+  setReading('humValue','humBar','humBadge',data.humidity,'%RH',100);
+  if (hasNumber(data.soil_moisture,0,100)) setSoil(data.soil_moisture);
+  else resetSoil();
+  el('lastReading').textContent = 'Data sensor terakhir: ' + new Date(packetTime).toLocaleString('id-ID');
+  el('freshness').textContent = '● Data sensor diterima (live)';
+  storeHistory(data);
+}
+function checkStale() {
+  if (!lastValidPacketAt) return;
+  if (Date.now() - lastValidPacketAt > MAX_AGE) {
+    el('tempBadge').textContent = 'TIDAK LIVE';
+    el('humBadge').textContent = 'TIDAK LIVE';
+    if (latestSoil !== null) el('soilBadge').textContent = 'TIDAK LIVE';
+    el('freshness').textContent = '● Data sensor terputus / lebih dari 20 detik';
+  }
+}
+function start() {
+  clock();
+  setInterval(clock, 1000);
+  setInterval(checkStale, 4000);
+  el('topicDisplay').textContent = MQTT_TOPIC;
+  loadHistory();
+  if (typeof Chart !== 'function') {
+    setConnection('Chart.js gagal dimuat. Periksa internet.', 'offline'); return;
+  }
+  buildCharts();
+  if (typeof mqtt === 'undefined') {
+    setConnection('Library MQTT.js gagal dimuat', 'offline'); return;
+  }
+  client = mqtt.connect(MQTT_URL, {
+    clientId:'web-plant-' + Math.random().toString(16).slice(2,12),
+    clean:true,connectTimeout:15000,reconnectPeriod:3000,keepalive:60,
+    protocolVersion:4
+  });
+  client.on('connect',()=>{
+    setConnection('MQTT Connected · menunggu sensor', 'online');
+    client.subscribe(MQTT_TOPIC,{qos:0},err=>{
+      if (err) setConnection('Subscribe topic gagal', 'offline');
+    });
+  });
+  client.on('message',handleMessage);
+  client.on('reconnect',()=>setConnection('Menghubungkan kembali...', ''));
+  client.on('offline',()=>setConnection('Broker Offline · reconnect', 'offline'));
+  client.on('close',()=>setConnection('Broker terputus · reconnect', 'offline'));
+  client.on('error',err=>{
+    console.error('MQTT error:',err);
+    setConnection('MQTT error · cek koneksi', 'offline');
+  });
+}
+window.addEventListener('load',start);
+</script>
+</body>
+</html>
